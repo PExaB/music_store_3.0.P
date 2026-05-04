@@ -39,7 +39,8 @@ def chat_api(request):
                 request.session.create()
             data = json.loads(request.body)
             user_message = data.get('message', '').strip()
-            session_id = data.get('session_id', request.session.session_key or 'anonymous')
+            incoming_session_id = data.get('session_id')
+            session_id = incoming_session_id if incoming_session_id and incoming_session_id != 'anonymous' else request.session.session_key
             chat_history = data.get('history', [])
 
             if not user_message:
@@ -58,8 +59,6 @@ def chat_api(request):
             # Сохраняем товары
             if products:
                 chat_session.last_products = json.dumps(products, ensure_ascii=False)
-            else:
-                chat_session.last_products = None
             chat_session.save()
 
             return JsonResponse({

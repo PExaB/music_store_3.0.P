@@ -16,7 +16,10 @@
         if (!toggleBtn || !chatWindow) return;
 
         // Идентификатор сессии (подставляется из шаблона)
-        const sessionId = window.AI_CHAT_SESSION_ID || 'anonymous';
+        const storedSessionId = localStorage.getItem('aiChatSessionId');
+        let sessionId = storedSessionId && storedSessionId !== 'anonymous'
+            ? storedSessionId
+            : (window.AI_CHAT_SESSION_ID || 'anonymous');
 
         // История диалога (храним на клиенте)
         let chatHistory = [];
@@ -105,6 +108,10 @@
                 });
 
                 const data = await response.json();
+                if (data.session_id) {
+                    sessionId = data.session_id;
+                    localStorage.setItem('aiChatSessionId', sessionId);
+                }
                 if (data.response) {
                     // Создаём контейнер для сообщения ассистента
                     const assistantMsgDiv = document.createElement('div');
@@ -190,7 +197,7 @@
         // Загрузка истории с сервера
         async function loadHistory() {
             try {
-                const response = await fetch(`/chat/api/chat/history/?session_id=${sessionId}`);
+                const response = await fetch(`/chat/api/chat/history/?session_id=${encodeURIComponent(sessionId)}`);
                 const data = await response.json();
                 // Очищаем лог и историю
                 chatLog.innerHTML = '';
