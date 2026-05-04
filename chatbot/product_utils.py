@@ -43,89 +43,114 @@ def search_products(
     instrument_type: str = None,
     exclude_instrument_types: list = None,
     electric_guitar_only: bool = False,
-    guitar_subtype: str = None,   # новый параметр: 'electric', 'acoustic', 'bass'
+    guitar_subtype: str = None,
 ):
     print(f">>> search_products args: query={query}, category={category}, budget_max={budget_max}, skill_level={skill_level}, instrument_type={instrument_type}, guitar_subtype={guitar_subtype}")
+
     filters = Q(is_active=True, in_stock=True)
 
+    # --- QUERY ---
     if query:
-        q_filter = Q(name__icontains=query) | Q(description__icontains=query) | Q(brand__name__icontains=query) | Q(category__name__icontains=query)
         query_lower = query.lower()
-        
-        # Автоматически определяем подтип гитары по ключевым словам
-        if any(word in query_lower for word in ['акустич', 'классич']):
-            q_filter |= Q(category__name__icontains='акустическая') | Q(category__name__icontains='классическая')
-            # Убираем электро и бас
-            q_filter &= ~Q(category__name__icontains='электр') & ~Q(category__name__icontains='бас')
-        elif any(word in query_lower for word in ['электр', 'электро']):
-            q_filter |= Q(category__name__icontains='электр')
-            q_filter &= ~Q(category__name__icontains='акустич') & ~Q(category__name__icontains='классич') & ~Q(category__name__icontains='бас')
-        elif any(word in query_lower for word in ['бас', 'басов']):
-            q_filter |= Q(category__name__icontains='бас') | Q(name__icontains='бас')
-            q_filter &= ~Q(category__name__icontains='акустич') & ~Q(category__name__icontains='электр')
-        
-        # Существующая логика с QUERY_TO_INSTRUMENT (оставляем)
+
+        q_filter = (
+            Q(name__icontains=query) |
+            Q(description__icontains=query) |
+            Q(brand__name__icontains=query) |
+            Q(category__name__icontains=query)
+        )
+
+        # Определяем instrument_type ТОЛЬКО через AND
+        detected_types = set()
         for key, val in QUERY_TO_INSTRUMENT.items():
             if key in query_lower:
-                q_filter |= Q(instrument_type=val)
-        
+                detected_types.add(val)
+
+        # если нашли один тип — применяем
+        if detected_types and not instrument_type:
+            if len(detected_types) == 1:
+                instrument_type = list(detected_types)[0]
+
         filters &= q_filter
 
+    # --- CATEGORY ---
     if category:
-        category_lower = category.lower()
-        if any(word in category_lower for word in ['усилител', 'комбо', 'combo', 'equipment']):
-            filters &= Q(category__name__icontains='усилител')
-        else:
-            filters &= Q(category__name__icontains=category)
+        filters &= Q(category__name__icontains=category)
 
-    # Дополнительно: если запрос явно про усилитель, ищем и в названии
-    if query and any(word in query.lower() for word in ['усилител', 'комбик', 'комбо']):
-        filters |= Q(category__name__icontains='усилител') | Q(name__icontains='усилител')
-
-    if skill_level and instrument_type != 'equipment':
-        filters &= Q(skill_level=skill_level)
-
+    # --- INSTRUMENT TYPE (главный фильтр) ---
     if instrument_type:
         filters &= Q(instrument_type=instrument_type)
 
-        # Уточнение для гитар
-        if instrument_type == 'guitar':
-            if guitar_subtype == 'electric':
-                filters &= ~Q(category__name__icontains='акуст')
-                filters &= ~Q(category__name__icontains='классич')
-                filters &= ~Q(category__name__icontains='бас')
-                filters &= ~Q(name__icontains='бас')
-            elif guitar_subtype == 'acoustic':
-                filters &= Q(category__name__icontains='акуст') | Q(category__name__icontains='классич')
-                filters &= ~Q(category__name__icontains='бас')
-            elif guitar_subtype == 'bass':
-                filters &= Q(category__name__icontains='бас') | Q(name__icontains='бас')
-            elif electric_guitar_only:
-                filters &= ~Q(category__name__icontains='акуст')
-                filters &= ~Q(category__name__icontains='классич')
-                filters &= ~Q(category__name__icontains='бас')
-        if instrument_type == 'equipment':
-            pass
+    # --- SKILL LEVEL ---
+    if skill_level and instrument_type != 'equipment':
+        filters &= Q(skill_level=skill_level)
 
+    # --- ГИТАРЫ (строгая логика) ---
+    if instrument_type == 'guitar':
+        query_lower = query.lower() if query else ""
+
+        # авто-определение subtype
+        if not guitar_subtype:
+            if any(word in query_lower for word in ['акустич', 'классич']):
+                guitar_subtype = 'acoustic'
+            elif any(word in query_lower for word in ['бас']):
+                guitar_subtype = 'bass'
+            elif any(word in query_lower for word in ['электр', 'комбик', 'усилител']):
+                guitar_subtype = 'electric'
+
+        if guitar_subtype == 'electric':
+            filters &= ~Q(category__name__icontains='акуст')
+            filters &= ~Q(category__name__icontains='классич')
+            filters &= ~Q(category__name__icontains='бас')
+            filters &= ~Q(name__icontains='бас')
+
+        elif guitar_subtype == 'acoustic':
+            filters &= (
+                Q(category__name__icontains='акуст') |
+                Q(category__name__icontains='классич')
+            )
+            filters &= ~Q(category__name__icontains='бас')
+
+        elif guitar_subtype == 'bass':
+            filters &= (
+                Q(category__name__icontains='бас') |
+                Q(name__icontains='бас')
+            )
+
+        elif electric_guitar_only:
+            filters &= ~Q(category__name__icontains='акуст')
+            filters &= ~Q(category__name__icontains='классич')
+            filters &= ~Q(category__name__icontains='бас')
+
+    # --- EXCLUDE ---
     if exclude_instrument_types:
         filters &= ~Q(instrument_type__in=exclude_instrument_types)
 
+    # --- QUERY ---
     products = Product.objects.filter(filters).select_related('brand', 'category')
 
+    # --- BUDGET ---
     if budget_max is not None:
         products = products.filter(price__lte=budget_max)
 
     products = products[:10]
 
+    # --- RESULT ---
     result = []
     for p in products:
         brand_name = p.brand.name if p.brand else ""
-        full_name = f"{brand_name} {p.name}".strip()
+        # Собираем полное имя без дублирования бренда
+        if p.brand and p.brand.name.lower() not in p.name.lower():
+            full_name = f"{p.brand.name} {p.name}".strip()
+        else:
+            full_name = p.name.strip()
+
         result.append({
             "id": p.id,
             "name": full_name,
             "price": str(p.price),
             "category": p.category.name,
+            "instrument_type": p.instrument_type,
             "description": p.description[:200] + "..." if len(p.description) > 200 else p.description,
             "skill_level": p.skill_level,
             "url": f"/products/{p.id}/",
@@ -135,6 +160,7 @@ def search_products(
 
     print(f">>> Final filters: {filters}")
     print(f">>> Products found: {products.count()}")
+
     return result
 
 def get_product_details(product_id: int):
@@ -147,7 +173,11 @@ def get_product_details(product_id: int):
         return {"error": f"Товар с ID {product_id} не найден"}
 
     brand_name = p.brand.name if p.brand else ""
-    full_name = f"{brand_name} {p.name}".strip()
+    # Собираем полное имя без дублирования бренда
+    if p.brand and p.brand.name.lower() not in p.name.lower():
+        full_name = f"{p.brand.name} {p.name}".strip()
+    else:
+        full_name = p.name.strip()
     return {
         "id": p.id,
         "name": full_name,

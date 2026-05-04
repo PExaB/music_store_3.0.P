@@ -12,6 +12,9 @@
         const sendBtn = document.getElementById('ai-chat-send');
         const typingIndicator = document.getElementById('ai-typing-indicator');
 
+        let lastInteractedProductId = null;
+        lastInteractedInstrumentType = null;
+
         // Если виджет не найден (например, на странице без base), выходим
         if (!toggleBtn || !chatWindow) return;
 
@@ -79,11 +82,18 @@
             let finalMessage = message;
 
             // Проверяем, спрашивает ли пользователь о последнем показанном товаре
-            const lastProductCard = document.querySelector('.ai-product-card[data-product-id]');
-            if (lastProductCard && /(эт(?:от|а|у|и)|расскажи|подробнее|больше инф|характеристики|у него|у неё|у нее|о нём|о нем)/i.test(message)) {
-                const productId = lastProductCard.dataset.productId;
-                // Добавляем скрытую инструкцию для модели – она не будет видна пользователю
-                finalMessage = `расскажи про товар с ID ${productId} (этот товар был показан ранее)`;
+            const productCards = document.querySelectorAll('.ai-product-card[data-product-id]');
+            const lastProductCard = productCards.length > 0 
+                ? productCards[productCards.length - 1] 
+                : null;
+            if (lastInteractedProductId && /(эт(?:от|а|у|и)|про него|про нее|о нем|о ней|характеристики)/i.test(message)) {
+                if (lastInteractedInstrumentType === 'equipment') {
+                    finalMessage = `расскажи подробнее про комбик с ID ${lastInteractedProductId}`;
+                } else if (lastInteractedInstrumentType === 'guitar') {
+                    finalMessage = `расскажи подробнее про гитару с ID ${lastInteractedProductId}`;
+                } else {
+                    finalMessage = `расскажи подробнее про товар с ID ${lastInteractedProductId}`;
+                }
             }
 
             // Далее продолжаем как обычно, но отправляем finalMessage
@@ -166,7 +176,8 @@
             card.className = 'ai-product-card';
             card.onclick = () => { window.location.href = product.url; };
             card.dataset.productId = product.id;
-            
+            card.dataset.instrumentType = product.instrument_type || '';
+
             // Изображение (если есть в данных)
             if (product.image) {
                 const img = document.createElement('img');
@@ -175,6 +186,13 @@
                 img.className = 'ai-product-image';
                 card.appendChild(img);
             }
+
+            card.onclick = (e) => {
+                e.stopPropagation();
+                lastInteractedProductId = product.id;
+                lastInteractedInstrumentType = product.instrument_type;
+                window.location.href = product.url;
+            };
             
             const info = document.createElement('div');
             info.className = 'ai-product-info';

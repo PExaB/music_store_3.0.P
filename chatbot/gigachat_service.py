@@ -3,12 +3,10 @@ import json
 import logging
 from django.conf import settings
 from gigachat import GigaChat
-from gigachat.models import Chat, Messages, MessagesRole, Function
+from gigachat.models import Chat, Messages, MessagesRole, Function, FunctionCall
 from gigachat.exceptions import GigaChatException
 import httpx  # вместо requests
 from store.models import Product
-import urllib.request
-import urllib.parse
 from .models import ChatSession, ChatMessage
 
 from .product_utils import search_products, get_product_details
@@ -161,7 +159,117 @@ class GigaChatService:
             )
         ]
 
+    def _run_search_web(self, q: str):
+        q = " ".join(q.split())
+
+        try:
+            api_key = settings.TAVILY_API_KEY
+
+            payload = {
+                "query": q,
+                "search_depth": "basic",
+                "max_results": 5,
+                "include_answer": False,
+                "include_raw_content": False,
+            }
+
+            with httpx.Client(timeout=15) as client:
+                resp = client.post(
+                    "https://api.tavily.com/search",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                )
+
+            if resp.status_code != 200:
+                logger.error(
+                    "Tavily Search error %s: %s",
+                    resp.status_code,
+                    resp.text[:1000],
+                )
+                return {
+                    "query": q,
+                    "error": f"Ошибка интернет-поиска Tavily: {resp.status_code}",
+                }
+
+            data = resp.json()
+            results = data.get("results", [])
+
+            logger.info("Tavily query='%s', results=%s", q, len(results))
+
+            if not results:
+                return {
+                    "query": q,
+                    "snippet": "Информация не найдена.",
+                }
+
+            snippets = []
+
+            for item in results[:5]:
+                title = item.get("title", "")
+                content = item.get("content", "")
+                url = item.get("url", "")
+
+                snippets.append(
+                    f"{title}: {content}\n{url}"
+                )
+
+            return {
+                "query": q,
+                "snippet": "\n".join(snippets)[:2000],
+            }
+
+        except Exception as e:
+            logger.exception("Tavily Search failed")
+            return {
+                "query": q,
+                "error": f"Не удалось выполнить поиск Tavily: {str(e)}",
+            }
+
+    def _is_detail_request(self, text: str) -> bool:
+        text = text.lower()
+        detail_keywords = [
+            "расскажи",
+            "подробнее",
+            "подробности",
+            "характеристики",
+            "характеристика",
+            "какая мощность",
+            "какой материал",
+            "какие параметры",
+            "про нее",
+            "про него",
+            "о ней",
+            "о нем",
+        ]
+        return any(keyword in text for keyword in detail_keywords)
+
+
+    def _get_last_found_product_from_session(self, session):
+        function_messages = ChatMessage.objects.filter(
+            session=session,
+            role="function",
+            function_name="search_products"
+        ).order_by("-created_at")
+
+        for msg in function_messages:
+            try:
+                data = json.loads(msg.content)
+            except Exception:
+                continue
+
+            if isinstance(data, list) and len(data) > 0:
+                return data[0]
+
+        return None
+
     def process_message_with_products(self, user_message: str, session_id: str, chat_history: list = None):
+
+        print(">>> CALLED process_message_with_products")
+        print(f">>> USER MESSAGE: {user_message}")
+
         # Получаем или создаём сессию
         session, _ = ChatSession.objects.get_or_create(session_key=session_id)
 
@@ -210,6 +318,90 @@ class GigaChatService:
         final_answer = ""
         found_products = []
 
+        if self._is_detail_request(user_message):
+            last_product = self._get_last_found_product_from_session(session)
+
+            if last_product:
+                product_id = last_product.get("id")
+
+                print(f">>> FALLBACK DETAILS REQUEST DETECTED")
+                print(f">>> LAST PRODUCT ID: {product_id}")
+
+                if Product.objects.filter(id=product_id).exists():
+                    details_result = get_product_details(product_id=product_id)
+
+                    # Добавляем get_product_details в историю сообщений для модели
+                    details_function_call = FunctionCall(
+                        name="get_product_details",
+                        arguments={"product_id": product_id}
+                    )
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="assistant",
+                        content="",
+                        function_name="get_product_details",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.ASSISTANT,
+                        content="",
+                        function_call=details_function_call
+                    ))
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="function",
+                        content=json.dumps(details_result, ensure_ascii=False),
+                        function_name="get_product_details",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.FUNCTION,
+                        content=json.dumps(details_result, ensure_ascii=False),
+                        name="get_product_details"
+                    ))
+
+                    product_name = details_result.get("name", "")
+                    web_query = f"{product_name} характеристики"
+
+                    print(f">>> FALLBACK forced search_web query: {web_query}")
+
+                    web_function_call = FunctionCall(
+                        name="search_web",
+                        arguments={"query": web_query}
+                    )
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="assistant",
+                        content="",
+                        function_name="search_web",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.ASSISTANT,
+                        content="",
+                        function_call=web_function_call
+                    ))
+
+                    web_result = self._run_search_web(web_query)
+
+                    print(f">>> FALLBACK forced search_web returned: {web_result}")
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="function",
+                        content=json.dumps(web_result, ensure_ascii=False),
+                        function_name="search_web",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.FUNCTION,
+                        content=json.dumps(web_result, ensure_ascii=False),
+                        name="search_web"
+                    ))
+
         try:
             while True:
                 response = self.client.chat(Chat(
@@ -240,6 +432,9 @@ class GigaChatService:
                 else:
                     function_args = raw_args
 
+                print(f">>> MODEL WANTS FUNCTION: {function_name}")
+                print(f">>> FUNCTION ARGS: {function_args}")
+
                 # Выполняем функцию
                 if function_name == "search_products":
                     result = search_products(**function_args)
@@ -254,29 +449,10 @@ class GigaChatService:
                         function_result_message = {"error": "product_not_found", "message": f"Товар с ID {product_id} не найден."}
                     else:
                         function_result_message = get_product_details(**function_args)
+
                 elif function_name == "search_web":
-                    q = function_args.get('query', '')
-                    try:
-                        encoded_query = urllib.parse.quote(q)
-                        search_url = f"https://ru.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&srlimit=1"
-                        req = urllib.request.Request(search_url, headers={'User-Agent': 'MusicStoreBot/1.0'})
-                        with urllib.request.urlopen(req, timeout=10) as resp:
-                            data = json.loads(resp.read())
-                        search_results = data.get("query", {}).get("search", [])
-                        if search_results:
-                            page_id = search_results[0]["pageid"]
-                            desc_url = f"https://ru.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=True&explaintext=True&pageids={page_id}&format=json"
-                            desc_req = urllib.request.Request(desc_url, headers={'User-Agent': 'MusicStoreBot/1.0'})
-                            with urllib.request.urlopen(desc_req, timeout=10) as desc_resp:
-                                desc_data = json.loads(desc_resp.read())
-                            pages = desc_data.get("query", {}).get("pages", {})
-                            extract = next(iter(pages.values())).get("extract", "Информация не найдена.")
-                            function_result_message = {"query": q, "snippet": extract[:500]}
-                        else:
-                            function_result_message = {"query": q, "snippet": "Информация не найдена."}
-                    except Exception as e:
-                        logger.error(f"Search web error: {e}")
-                        function_result_message = {"query": q, "error": f"Не удалось выполнить поиск: {str(e)}"}
+                    q = function_args.get("query", "")
+                    function_result_message = self._run_search_web(q)
                     print(f">>> search_web returned: {function_result_message}")
 
                 else:
@@ -289,6 +465,47 @@ class GigaChatService:
                     content=json.dumps(function_result_message, ensure_ascii=False),
                     name=function_name
                 ))
+                if (
+                    function_name == "get_product_details"
+                    and isinstance(function_result_message, dict)
+                    and not function_result_message.get("error")
+                ):
+                    product_name = function_result_message.get("name", "")
+                    web_query = f"{product_name} характеристики"
+
+                    web_function_call = FunctionCall(
+                        name="search_web",
+                        arguments={"query": web_query}
+                    )
+
+                    # Сохраняем искусственный вызов search_web в историю
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="assistant",
+                        content="",
+                        function_name="search_web",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.ASSISTANT,
+                        content="",
+                        function_call=web_function_call
+                    ))
+
+                    web_result = self._run_search_web(web_query)
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role="function",
+                        content=json.dumps(web_result, ensure_ascii=False),
+                        function_name="search_web",
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.FUNCTION,
+                        content=json.dumps(web_result, ensure_ascii=False),
+                        name="search_web"
+                    ))
 
             return final_answer, found_products
 
@@ -358,27 +575,9 @@ class GigaChatService:
                         function_result_message = get_product_details(**function_args)
 
                 elif function_name == "search_web":
-                    q = function_args.get('query', '')
-                    try:
-                        encoded_query = urllib.parse.quote(q)
-                        search_url = f"https://ru.wikipedia.org/w/api.php?action=query&list=search&srsearch={encoded_query}&format=json&srlimit=1"
-                        req = urllib.request.Request(search_url, headers={'User-Agent': 'MusicStoreBot/1.0'})
-                        with urllib.request.urlopen(req, timeout=10) as desc_resp:
-                            data = json.loads(desc_resp.read())
-                        
-                        search_results = data.get("query", {}).get("search", [])
-                        if search_results:
-                            page_id = search_results[0]["pageid"]
-                            desc_url = f"https://ru.wikipedia.org/w/api.php?action=query&prop=extracts&exintro=True&explaintext=True&pageids={page_id}&format=json"
-                            with urllib.request.urlopen(desc_url, timeout=10) as desc_resp:
-                                desc_data = json.loads(desc_resp.read())
-                            pages = desc_data.get("query", {}).get("pages", {})
-                            extract = next(iter(pages.values())).get("extract", "Информация не найдена.")
-                            function_result_message = {"query": q, "snippet": extract[:500]}
-                        else:
-                            function_result_message = {"query": q, "snippet": "Информация не найдена."}
-                    except Exception as e:
-                        function_result_message = {"error": f"Ошибка поиска: {str(e)}"}
+                    q = function_args.get("query", "")
+                    function_result_message = self._run_search_web(q)
+                    print(f">>> search_web returned: {function_result_message}")
 
                 else:
                     function_result_message = {"error": f"Неизвестная функция: {function_name}"}
@@ -389,6 +588,37 @@ class GigaChatService:
                     content=json.dumps(function_result_message, ensure_ascii=False),
                     name=function_name
                 ))
+
+                if (
+                    function_name == "get_product_details"
+                    and isinstance(function_result_message, dict)
+                    and not function_result_message.get("error")
+                ):
+                    product_name = function_result_message.get("name", "")
+                    web_query = f"{product_name} характеристики"
+
+                    web_function_call = FunctionCall(
+                        name="search_web",
+                        arguments={"query": web_query}
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.ASSISTANT,
+                        content="",
+                        function_call=web_function_call
+                    ))
+
+                    print(f">>> forced search_web query: {web_query}")
+
+                    web_result = self._run_search_web(web_query)
+
+                    print(f">>> forced search_web returned: {web_result}")
+
+                    messages.append(Messages(
+                        role=MessagesRole.FUNCTION,
+                        content=json.dumps(web_result, ensure_ascii=False),
+                        name="search_web"
+                    ))
                 # Цикл продолжается — модель может снова вызвать функцию
 
             return final_answer

@@ -1,10 +1,13 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from decouple import config
 
 load_dotenv()
 
 GIGACHAT_CREDENTIALS = os.environ.get('GIGACHAT_CREDENTIALS')
+
+TAVILY_API_KEY = config("TAVILY_API_KEY")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
