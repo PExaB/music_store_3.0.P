@@ -45,8 +45,7 @@ def search_products(
     electric_guitar_only: bool = False,
     guitar_subtype: str = None,
 ):
-    print(f">>> search_products args: query={query}, category={category}, budget_max={budget_max}, skill_level={skill_level}, instrument_type={instrument_type}, guitar_subtype={guitar_subtype}")
-
+  
     filters = Q(is_active=True, in_stock=True)
 
     # --- QUERY ---
@@ -157,9 +156,6 @@ def search_products(
             "features": p.features[:100] + "..." if p.features and len(p.features) > 100 else p.features,
             "image": p.image.url if p.image else None,
         })
-
-    print(f">>> Final filters: {filters}")
-    print(f">>> Products found: {products.count()}")
 
     return result
 

@@ -34,55 +34,105 @@ def clean_response(text):
 def chat_api(request):
     if request.method == 'POST':
         try:
-            # Создаём сессию, если её ещё нет
             if not request.session.session_key:
                 request.session.create()
+
             data = json.loads(request.body)
             user_message = data.get('message', '').strip()
-            incoming_session_id = data.get('session_id')
-            session_id = incoming_session_id if incoming_session_id and incoming_session_id != 'anonymous' else request.session.session_key
             chat_history = data.get('history', [])
 
             if not user_message:
                 return JsonResponse({'error': 'Сообщение не может быть пустым'}, status=400)
 
+            is_auth = request.user.is_authenticated
+
+            if is_auth:
+                # История привязана к пользователю, а не к localStorage
+                session_id = f"user_{request.user.id}"
+            else:
+                # Для анонимных используем временный id, но не сохраняем историю
+                session_id = f"anon_{request.session.session_key}"
+
+                # На всякий случай удаляем старую анонимную историю
+                ChatSession.objects.filter(session_key=session_id).delete()
+
             service = GigaChatService()
-            response_text, products = service.process_message_with_products(user_message, session_id, chat_history)
+            response_text, products = service.process_message_with_products(
+                user_message,
+                session_id,
+                chat_history
+            )
 
-            # Получаем сессию чата (она уже создана внутри process_message_with_products)
-            try:
-                chat_session = ChatSession.objects.get(session_key=session_id)
-            except ChatSession.DoesNotExist:
-                # Если по какой-то причине не создана - создаём
-                chat_session = ChatSession.objects.create(session_key=session_id)
+            if is_auth:
+                chat_session, _ = ChatSession.objects.get_or_create(
+                    session_key=session_id,
+                    defaults={'user': request.user}
+                )
 
-            # Сохраняем товары
-            if products:
-                chat_session.last_products = json.dumps(products, ensure_ascii=False)
-            chat_session.save()
+                if chat_session.user_id != request.user.id:
+                    chat_session.user = request.user
+
+                if products:
+                    chat_session.last_products = json.dumps(products, ensure_ascii=False)
+
+                chat_session.save()
+            else:
+                # Удаляем всё, что service успел сохранить для анонима
+                ChatSession.objects.filter(session_key=session_id).delete()
 
             return JsonResponse({
                 'response': clean_response(response_text),
                 'products': products,
-                'session_id': session_id
+                'session_id': session_id if is_auth else 'anonymous',
+                'authenticated': is_auth,
             })
+
         except Exception as e:
             traceback.print_exc()
             return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+
     return JsonResponse({'error': 'Method not allowed'}, status=405)
 
+
 def get_chat_history(request):
-    session_id = request.GET.get('session_id', 'anonymous')
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            'history': [],
+            'products': [],
+            'authenticated': False,
+        })
+
+    session_id = f"user_{request.user.id}"
+
     try:
-        session = ChatSession.objects.get(session_key=session_id)
+        session = ChatSession.objects.get(
+            session_key=session_id,
+            user=request.user
+        )
     except ChatSession.DoesNotExist:
-        return JsonResponse({'history': [], 'products': []})
+        return JsonResponse({
+            'history': [],
+            'products': [],
+            'authenticated': True,
+        })
+
     messages = ChatMessage.objects.filter(session=session).order_by('created_at')
-    history = [{'role': m.role, 'content': m.content} for m in messages if m.role in ('user', 'assistant')]
+
+    history = [
+        {'role': m.role, 'content': m.content}
+        for m in messages
+        if m.role in ('user', 'assistant') and m.content
+    ]
+
     products = []
     if session.last_products:
         try:
             products = json.loads(session.last_products)
-        except:
+        except Exception:
             pass
-    return JsonResponse({'history': history, 'products': products})
+
+    return JsonResponse({
+        'history': history,
+        'products': products,
+        'authenticated': True,
+    })

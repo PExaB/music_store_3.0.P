@@ -8,6 +8,7 @@ from gigachat.exceptions import GigaChatException
 import httpx  # вместо requests
 from store.models import Product
 from .models import ChatSession, ChatMessage
+import re
 
 from .product_utils import search_products, get_product_details
 
@@ -20,6 +21,8 @@ SYSTEM_PROMPT = """Ты — AI-консультант магазина «Music S
 2. Если `search_products` возвращает пустой список, скажи: «По вашему запросу ничего не найдено. Попробуйте изменить бюджет или другие параметры». **Не предлагай вымышленных моделей.**
 3. **Никогда не ищи «готовые комплекты».** В базе их нет. Твоя задача — подбирать товары по отдельности.
 4. **Запросы по бренду**: если пользователь спрашивает о товарах конкретного бренда (например, «Fender», «Yamaha»), немедленно вызывай `search_products(query="название_бренда")` без дополнительных фильтров. Если пользователь уточняет тип инструмента (например, «гитары Fender»), добавь соответствующий параметр (`instrument_type='guitar'`).
+5. Если пользователь просит «покажи», «найди», «есть ли», «посоветуй», «подбери» товары или товары бренда, но НЕ просит характеристики/подробности, отвечай только по результатам `search_products`: название, категория, цена, наличие и ссылка. Не вызывай `get_product_details` и `search_web`, не перечисляй характеристики и не добавляй сведения из интернета.
+6. Никогда не пиши, что товар идёт «в комплекте» с другим товаром, если это прямо не указано в названии, описании или features товара. Готовых комплектов в базе нет.
 
 **Обработка запросов с двумя товарами (инструмент + аксессуар):**
 - Пользователь может попросить пару: скрипка + смычок, барабаны + палочки, гитара + усилитель, клавишные + стойка и т.п.
@@ -228,10 +231,56 @@ class GigaChatService:
                 "error": f"Не удалось выполнить поиск Tavily: {str(e)}",
             }
 
+    def _is_brand_info_request(self, text: str) -> bool:
+        text = text.lower().strip()
+
+        # Не считаем запросом про бренд обращения к последнему товару
+        product_reference_phrases = [
+            "про нее",
+            "про него",
+            "о ней",
+            "о нем",
+            "про эту модель",
+            "об этой модели",
+            "про товар",
+            "об этом товаре",
+            "с id",
+            "id ",
+        ]
+
+        if any(phrase in text for phrase in product_reference_phrases):
+            return False
+
+        brand_keywords = [
+            "про фирму",
+            "о фирме",
+            "фирма",
+            "бренд",
+            "о бренде",
+            "про бренд",
+            "компания",
+            "производитель",
+        ]
+
+        if any(keyword in text for keyword in brand_keywords):
+            return True
+
+        # Например: "расскажи про ibanez", "расскажи о yamaha"
+        if text.startswith("расскажи про ") or text.startswith("расскажи о "):
+            return True
+
+        return False
+
+
     def _is_detail_request(self, text: str) -> bool:
-        text = text.lower()
+        text = text.lower().strip()
+
+        # Если пользователь спрашивает про фирму/бренд,
+        # НЕ считаем это запросом подробностей последнего товара.
+        if self._is_brand_info_request(text):
+            return False
+
         detail_keywords = [
-            "расскажи",
             "подробнее",
             "подробности",
             "характеристики",
@@ -243,7 +292,14 @@ class GigaChatService:
             "про него",
             "о ней",
             "о нем",
+            "расскажи про нее",
+            "расскажи про него",
+            "расскажи про эту модель",
+            "расскажи об этой модели",
+            "расскажи про товар",
+            "расскажи об этом товаре",
         ]
+
         return any(keyword in text for keyword in detail_keywords)
 
 
@@ -264,12 +320,14 @@ class GigaChatService:
                 return data[0]
 
         return None
+    
+    def _extract_product_id_from_text(self, text: str):
+        match = re.search(r'\bID\s*(\d+)\b', text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+        return None
 
     def process_message_with_products(self, user_message: str, session_id: str, chat_history: list = None):
-
-        print(">>> CALLED process_message_with_products")
-        print(f">>> USER MESSAGE: {user_message}")
-
         # Получаем или создаём сессию
         session, _ = ChatSession.objects.get_or_create(session_key=session_id)
 
@@ -310,97 +368,151 @@ class GigaChatService:
             # Сообщения с role='function' обрабатываются только в паре с assistant выше
             i += 1
 
+        # Если истории в БД нет, используем историю с фронта.
+        # Это нужно для анонимного пользователя, у которого история хранится в sessionStorage.
+        if not saved_messages and chat_history:
+            for msg in chat_history[-10:]:
+                role = msg.get('role')
+                content = msg.get('content', '')
+
+                if not content:
+                    continue
+
+                if role == 'user':
+                    messages.append(Messages(role=MessagesRole.USER, content=content))
+                elif role == 'assistant':
+                    messages.append(Messages(role=MessagesRole.ASSISTANT, content=content))
+
         # Добавляем текущее сообщение пользователя
         messages.append(Messages(role=MessagesRole.USER, content=user_message))
+
         # Сохраняем сообщение пользователя в БД
         ChatMessage.objects.create(session=session, role='user', content=user_message)
 
         final_answer = ""
         found_products = []
 
-        if self._is_detail_request(user_message):
+        allow_details = self._is_detail_request(user_message) or bool(self._extract_product_id_from_text(user_message))
+        allow_brand_web = self._is_brand_info_request(user_message)
+
+        if self._is_brand_info_request(user_message):
+            web_query = f"{user_message} музыкальные инструменты официальный сайт история"
+
+            web_function_call = FunctionCall(
+                name="search_web",
+                arguments={"query": web_query}
+            )
+
+            ChatMessage.objects.create(
+                session=session,
+                role="assistant",
+                content="",
+                function_name="search_web",
+            )
+
+            messages.append(Messages(
+                role=MessagesRole.ASSISTANT,
+                content="",
+                function_call=web_function_call
+            ))
+
+            web_result = self._run_search_web(web_query)
+
+            ChatMessage.objects.create(
+                session=session,
+                role="function",
+                content=json.dumps(web_result, ensure_ascii=False),
+                function_name="search_web",
+            )
+
+            messages.append(Messages(
+                role=MessagesRole.FUNCTION,
+                content=json.dumps(web_result, ensure_ascii=False),
+                name="search_web"
+            ))
+
+        explicit_product_id = self._extract_product_id_from_text(user_message)
+
+        if self._is_detail_request(user_message) or explicit_product_id:
             last_product = self._get_last_found_product_from_session(session)
 
-            if last_product:
+            if explicit_product_id:
+                product_id = explicit_product_id
+            elif last_product:
                 product_id = last_product.get("id")
+            else:
+                product_id = None
 
-                print(f">>> FALLBACK DETAILS REQUEST DETECTED")
-                print(f">>> LAST PRODUCT ID: {product_id}")
+            if product_id and Product.objects.filter(id=product_id).exists():
+                details_result = get_product_details(product_id=product_id)
 
-                if Product.objects.filter(id=product_id).exists():
-                    details_result = get_product_details(product_id=product_id)
+                # Добавляем get_product_details в историю сообщений для модели
+                details_function_call = FunctionCall(
+                    name="get_product_details",
+                    arguments={"product_id": product_id}
+                )
 
-                    # Добавляем get_product_details в историю сообщений для модели
-                    details_function_call = FunctionCall(
-                        name="get_product_details",
-                        arguments={"product_id": product_id}
-                    )
+                ChatMessage.objects.create(
+                    session=session,
+                    role="assistant",
+                    content="",
+                    function_name="get_product_details",
+                )
 
-                    ChatMessage.objects.create(
-                        session=session,
-                        role="assistant",
-                        content="",
-                        function_name="get_product_details",
-                    )
+                messages.append(Messages(
+                    role=MessagesRole.ASSISTANT,
+                    content="",
+                    function_call=details_function_call
+                ))
 
-                    messages.append(Messages(
-                        role=MessagesRole.ASSISTANT,
-                        content="",
-                        function_call=details_function_call
-                    ))
+                ChatMessage.objects.create(
+                    session=session,
+                    role="function",
+                    content=json.dumps(details_result, ensure_ascii=False),
+                    function_name="get_product_details",
+                )
 
-                    ChatMessage.objects.create(
-                        session=session,
-                        role="function",
-                        content=json.dumps(details_result, ensure_ascii=False),
-                        function_name="get_product_details",
-                    )
+                messages.append(Messages(
+                    role=MessagesRole.FUNCTION,
+                    content=json.dumps(details_result, ensure_ascii=False),
+                    name="get_product_details"
+                ))
 
-                    messages.append(Messages(
-                        role=MessagesRole.FUNCTION,
-                        content=json.dumps(details_result, ensure_ascii=False),
-                        name="get_product_details"
-                    ))
+                product_name = details_result.get("name", "")
+                web_query = f"{product_name} характеристики"
 
-                    product_name = details_result.get("name", "")
-                    web_query = f"{product_name} характеристики"
+                web_function_call = FunctionCall(
+                    name="search_web",
+                    arguments={"query": web_query}
+                )
 
-                    print(f">>> FALLBACK forced search_web query: {web_query}")
+                ChatMessage.objects.create(
+                    session=session,
+                    role="assistant",
+                    content="",
+                    function_name="search_web",
+                )
 
-                    web_function_call = FunctionCall(
-                        name="search_web",
-                        arguments={"query": web_query}
-                    )
+                messages.append(Messages(
+                    role=MessagesRole.ASSISTANT,
+                    content="",
+                    function_call=web_function_call
+                ))
 
-                    ChatMessage.objects.create(
-                        session=session,
-                        role="assistant",
-                        content="",
-                        function_name="search_web",
-                    )
+                web_result = self._run_search_web(web_query)
 
-                    messages.append(Messages(
-                        role=MessagesRole.ASSISTANT,
-                        content="",
-                        function_call=web_function_call
-                    ))
+                ChatMessage.objects.create(
+                    session=session,
+                    role="function",
+                    content=json.dumps(web_result, ensure_ascii=False),
+                    function_name="search_web",
+                )
 
-                    web_result = self._run_search_web(web_query)
-
-                    print(f">>> FALLBACK forced search_web returned: {web_result}")
-
-                    ChatMessage.objects.create(
-                        session=session,
-                        role="function",
-                        content=json.dumps(web_result, ensure_ascii=False),
-                        function_name="search_web",
-                    )
-
-                    messages.append(Messages(
-                        role=MessagesRole.FUNCTION,
-                        content=json.dumps(web_result, ensure_ascii=False),
-                        name="search_web"
-                    ))
+                messages.append(Messages(
+                    role=MessagesRole.FUNCTION,
+                    content=json.dumps(web_result, ensure_ascii=False),
+                    name="search_web"
+                ))
 
         try:
             while True:
@@ -432,8 +544,26 @@ class GigaChatService:
                 else:
                     function_args = raw_args
 
-                print(f">>> MODEL WANTS FUNCTION: {function_name}")
-                print(f">>> FUNCTION ARGS: {function_args}")
+                if function_name in ["get_product_details", "search_web"] and not allow_details and not allow_brand_web:
+                    function_result_message = {
+                        "error": "tool_not_allowed_for_this_request",
+                        "message": "Пользователь просил показать или подобрать товары, а не характеристики. Ответь только по результатам search_products."
+                    }
+
+                    ChatMessage.objects.create(
+                        session=session,
+                        role='function',
+                        content=json.dumps(function_result_message, ensure_ascii=False),
+                        function_name=function_name
+                    )
+
+                    messages.append(Messages(
+                        role=MessagesRole.FUNCTION,
+                        content=json.dumps(function_result_message, ensure_ascii=False),
+                        name=function_name
+                    ))
+
+                    continue
 
                 # Выполняем функцию
                 if function_name == "search_products":
@@ -453,7 +583,6 @@ class GigaChatService:
                 elif function_name == "search_web":
                     q = function_args.get("query", "")
                     function_result_message = self._run_search_web(q)
-                    print(f">>> search_web returned: {function_result_message}")
 
                 else:
                     function_result_message = {"error": f"Неизвестная функция: {function_name}"}
@@ -577,7 +706,6 @@ class GigaChatService:
                 elif function_name == "search_web":
                     q = function_args.get("query", "")
                     function_result_message = self._run_search_web(q)
-                    print(f">>> search_web returned: {function_result_message}")
 
                 else:
                     function_result_message = {"error": f"Неизвестная функция: {function_name}"}
@@ -608,11 +736,7 @@ class GigaChatService:
                         function_call=web_function_call
                     ))
 
-                    print(f">>> forced search_web query: {web_query}")
-
                     web_result = self._run_search_web(web_query)
-
-                    print(f">>> forced search_web returned: {web_result}")
 
                     messages.append(Messages(
                         role=MessagesRole.FUNCTION,
