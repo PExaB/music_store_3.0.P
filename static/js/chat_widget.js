@@ -1,4 +1,4 @@
-// chatbot/static/chatbot/js/chat_widget.js
+// static/js/chat_widget.js
 
 (function() {
     document.addEventListener('DOMContentLoaded', function() {

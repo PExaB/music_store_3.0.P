@@ -12,10 +12,12 @@ def index(request):
     """Главная страница"""
     featured_products = Product.objects.filter(is_active=True)[:8]
     categories = Category.objects.all()
+    brands = Brand.objects.filter(is_active=True)  # активные бренды для карусели
     
     context = {
         'featured_products': featured_products,
         'categories': categories,
+        'brands': brands,
     }
     return render(request, 'store/index.html', context)
 
