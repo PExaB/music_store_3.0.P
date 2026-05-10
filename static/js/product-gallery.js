@@ -1,30 +1,54 @@
 // Галерея изображений товара
-document.addEventListener('DOMContentLoaded', function() {
-    const mainImage = document.querySelector('.col-md-6 img.img-fluid');
-    const thumbnails = document.querySelectorAll('.img-thumbnail');
-    
-    if (mainImage && thumbnails.length > 0) {
-        thumbnails.forEach(thumb => {
-            thumb.addEventListener('click', function() {
-                // Обновляем основное изображение
-                mainImage.src = this.src;
-                mainImage.alt = this.alt;
-                
-                // Убираем активный класс у всех миниатюр
-                thumbnails.forEach(t => t.classList.remove('active'));
-                // Добавляем активный класс к текущей миниатюре
-                this.classList.add('active');
+document.addEventListener('DOMContentLoaded', function () {
+    const mainImage = document.getElementById('mainProductImage');
+    const thumbsContainer = document.getElementById('productThumbs');
+    const thumbnails = document.querySelectorAll('.product-thumb');
+
+    const scrollUp = document.getElementById('thumbScrollUp');
+    const scrollDown = document.getElementById('thumbScrollDown');
+
+    if (!mainImage || thumbnails.length === 0) {
+        return;
+    }
+
+    thumbnails.forEach(function (thumb) {
+        thumb.addEventListener('click', function () {
+            const newImage = this.dataset.image;
+            const img = this.querySelector('img');
+
+            if (!newImage) {
+                return;
+            }
+
+            mainImage.src = newImage;
+
+            if (img && img.alt) {
+                mainImage.alt = img.alt;
+            }
+
+            thumbnails.forEach(function (item) {
+                item.classList.remove('active');
+            });
+
+            this.classList.add('active');
+        });
+    });
+
+    if (scrollUp && thumbsContainer) {
+        scrollUp.addEventListener('click', function () {
+            thumbsContainer.scrollBy({
+                top: -110,
+                behavior: 'smooth'
             });
         });
-        
-        // Добавляем стиль для активной миниатюры
-        const style = document.createElement('style');
-        style.textContent = `
-            .img-thumbnail.active {
-                border-color: #0d6efd;
-                box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
-            }
-        `;
-        document.head.appendChild(style);
+    }
+
+    if (scrollDown && thumbsContainer) {
+        scrollDown.addEventListener('click', function () {
+            thumbsContainer.scrollBy({
+                top: 110,
+                behavior: 'smooth'
+            });
+        });
     }
 });

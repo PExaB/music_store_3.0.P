@@ -3,30 +3,191 @@
 
 {% block title %}Music Store - {{ product.name }}{% endblock %}
 
+{% block extra_css %}
+<style>
+    .product-gallery-layout {
+        display: flex;
+        gap: 18px;
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .product-thumbs-wrapper {
+        width: 90px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .product-thumbs {
+        width: 90px;
+        max-height: 520px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 2px;
+        scrollbar-width: none;
+    }
+
+    .product-thumbs::-webkit-scrollbar {
+        display: none;
+    }
+
+    .product-thumb {
+        width: 82px;
+        height: 82px;
+        border: 1px solid #dee2e6;
+        border-radius: 10px;
+        background: #fff;
+        padding: 4px;
+        cursor: pointer;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .product-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+
+    .product-thumb.active {
+        border-color: #212529;
+        box-shadow: 0 0 0 1px #212529;
+    }
+
+    .thumb-scroll-btn {
+        width: 34px;
+        height: 28px;
+        border: none;
+        background: #f8f9fa;
+        color: #333;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background 0.2s ease;
+    }
+
+    .thumb-scroll-btn:hover {
+        background: #e9ecef;
+    }
+
+    .product-main-image-box {
+        width: 100%;
+        height: 560px;
+        border: 1px solid #dee2e6;
+        border-radius: 16px;
+        background: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        padding: 25px;
+    }
+
+    .product-main-image {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        display: block;
+    }
+
+    @media (max-width: 768px) {
+        .product-gallery-layout {
+            flex-direction: column-reverse;
+        }
+
+        .product-thumbs-wrapper {
+            width: 100%;
+            flex-direction: row;
+        }
+
+        .product-thumbs {
+            width: 100%;
+            max-height: none;
+            overflow-x: auto;
+            overflow-y: hidden;
+            flex-direction: row;
+        }
+
+        .thumb-scroll-btn {
+            display: none;
+        }
+
+        .product-main-image-box {
+            height: 380px;
+        }
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container">
     <div class="row">
         <!-- Изображение товара -->
         <div class="col-md-6">
-            {% if product.image %}
-                <img src="{{ product.image.url }}" class="img-fluid rounded shadow" alt="{{ product.name }}">
-            {% else %}
-                <img src="{% static 'img/no-image.jpg' %}" class="img-fluid rounded" alt="No image">
-            {% endif %}
-            
-            <!-- Дополнительные изображения -->
-            {% if product.images.all %}
-            <div class="row mt-3">
-                {% for image in product.images.all %}
-                <div class="col-3">
-                    <img src="{{ image.image.url }}" 
-                        class="img-thumbnail {% if forloop.first %}active{% endif %}" 
-                        alt="{{ image.alt_text|default:product.name }}"
-                        style="cursor: pointer; transition: all 0.3s ease;">
+            <div class="product-gallery-layout">
+
+                <!-- Левая вертикальная карусель -->
+                <div class="product-thumbs-wrapper">
+
+                    <button type="button" class="thumb-scroll-btn" id="thumbScrollUp">
+                        <i class="fas fa-chevron-up"></i>
+                    </button>
+
+                    <div class="product-thumbs" id="productThumbs">
+
+                        {% if product.image %}
+                            <button type="button" class="product-thumb active" data-image="{{ product.image.url }}">
+                                <img src="{{ product.image.url }}" alt="{{ product.name }}">
+                            </button>
+                        {% endif %}
+
+                        {% for image in product.images.all %}
+                            <button type="button" class="product-thumb" data-image="{{ image.image.url }}">
+                                <img src="{{ image.image.url }}" alt="{{ image.alt_text|default:product.name }}">
+                            </button>
+                        {% endfor %}
+
+                    </div>
+
+                    <button type="button" class="thumb-scroll-btn" id="thumbScrollDown">
+                        <i class="fas fa-chevron-down"></i>
+                    </button>
+
                 </div>
-                {% endfor %}
+
+                <!-- Основное фото -->
+                <div class="product-main-image-box">
+                    {% if product.image %}
+                        <img 
+                            id="mainProductImage"
+                            src="{{ product.image.url }}" 
+                            alt="{{ product.name }}"
+                            class="product-main-image"
+                        >
+                    {% elif product.images.all %}
+                        {% with first_image=product.images.all.0 %}
+                            <img 
+                                id="mainProductImage"
+                                src="{{ first_image.image.url }}" 
+                                alt="{{ product.name }}"
+                                class="product-main-image"
+                            >
+                        {% endwith %}
+                    {% else %}
+                        <img 
+                            id="mainProductImage"
+                            src="{% static 'img/no-image.jpg' %}" 
+                            alt="No image"
+                            class="product-main-image"
+                        >
+                    {% endif %}
+                </div>
+
             </div>
-            {% endif %}
         </div>
         
         <!-- Информация о товаре -->
@@ -238,4 +399,5 @@
 {% block extra_js %}
 <script src="{% static 'js/product-tabs.js' %}"></script>
 <script src="{% static 'js/product-gallery.js' %}"></script>
+
 {% endblock %}
