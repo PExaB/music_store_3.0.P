@@ -1,6 +1,151 @@
 {% extends "admin/change_list.html" %}
 
 {% block result_list %}
+    {% if sales_insights %}
+        <section class="sales-ai-panel">
+            <div class="sales-ai-header">
+                <div>
+                    <h2>AI-аналитик продаж</h2>
+                    <p>Автоматические выводы по продажам, спросу и остаткам за последние 30 дней.</p>
+                </div>
+            </div>
+
+            <div class="sales-ai-metrics">
+                <div class="sales-ai-card">
+                    <span>Выручка за 30 дней</span>
+                    <strong>{{ sales_insights.current_revenue|floatformat:2 }} руб.</strong>
+                    <small class="{% if sales_insights.revenue_growth >= 0 %}positive{% else %}negative{% endif %}">
+                        {{ sales_insights.revenue_growth }}% к прошлому периоду
+                    </small>
+                </div>
+                <div class="sales-ai-card">
+                    <span>Динамика продаж</span>
+                    <strong>{{ sales_insights.qty_growth }}%</strong>
+                    <small>по количеству проданных товаров</small>
+                </div>
+                <div class="sales-ai-card">
+                    <span>Средний чек</span>
+                    <strong>{{ sales_insights.average_check|floatformat:2 }} руб.</strong>
+                    <small>по оплаченным заказам</small>
+                </div>
+                <div class="sales-ai-card">
+                    <span>Риск остатков</span>
+                    <strong>{{ sales_insights.low_stock_alerts|length }}</strong>
+                    <small>товаров требуют внимания</small>
+                </div>
+            </div>
+
+            {% if sales_insights.recommendations %}
+                <div class="sales-ai-recommendations">
+                    <h3>Рекомендации</h3>
+                    <ul>
+                        {% for recommendation in sales_insights.recommendations %}
+                            <li>{{ recommendation }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
+
+            <div class="sales-ai-grid">
+                <div class="sales-ai-block">
+                    <h3>Топ товаров</h3>
+                    {% if sales_insights.top_products %}
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Товар</th>
+                                    <th>Продано</th>
+                                    <th>Выручка</th>
+                                    <th>Остаток</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for product in sales_insights.top_products %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ product.product__name }}</strong>
+                                            <small>{{ product.product__category__name }}{% if product.product__brand__name %} · {{ product.product__brand__name }}{% endif %}</small>
+                                        </td>
+                                        <td>{{ product.sold_qty }}</td>
+                                        <td>{{ product.revenue|floatformat:2 }} руб.</td>
+                                        <td>{{ product.product__stock_quantity }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <p class="sales-ai-empty">Данных пока недостаточно.</p>
+                    {% endif %}
+                </div>
+
+                <div class="sales-ai-block">
+                    <h3>Прогноз спроса</h3>
+                    {% if sales_insights.product_forecast %}
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Товар</th>
+                                    <th>30 дней</th>
+                                    <th>Рост</th>
+                                    <th>Остаток</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for product in sales_insights.product_forecast %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ product.name }}</strong>
+                                            <small>{{ product.category }}</small>
+                                        </td>
+                                        <td>{{ product.recent_qty }}</td>
+                                        <td class="{% if product.growth_percent >= 0 %}positive{% else %}negative{% endif %}">
+                                            {{ product.growth_percent }}%
+                                        </td>
+                                        <td>{{ product.stock_quantity }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <p class="sales-ai-empty">Для прогноза нужны продажи за последние 30 дней.</p>
+                    {% endif %}
+                </div>
+
+                <div class="sales-ai-block">
+                    <h3>Категории</h3>
+                    {% if sales_insights.top_categories %}
+                        <ul class="sales-ai-list">
+                            {% for category in sales_insights.top_categories %}
+                                <li>
+                                    <span>{{ category.product__category__name }}</span>
+                                    <strong>{{ category.revenue|floatformat:2 }} руб.</strong>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="sales-ai-empty">Нет данных по категориям.</p>
+                    {% endif %}
+                </div>
+
+                <div class="sales-ai-block">
+                    <h3>Бренды</h3>
+                    {% if sales_insights.top_brands %}
+                        <ul class="sales-ai-list">
+                            {% for brand in sales_insights.top_brands %}
+                                <li>
+                                    <span>{% if brand.product__brand__name %}{{ brand.product__brand__name }}{% else %}Без бренда{% endif %}</span>
+                                    <strong>{{ brand.revenue|floatformat:2 }} руб.</strong>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                    {% else %}
+                        <p class="sales-ai-empty">Нет данных по брендам.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    {% endif %}
+
     {{ block.super }}
     <table class="table totals-table">
         <tr>
@@ -8,7 +153,7 @@
             <td colspan="1" style="text-align: right;"><strong>Итого:</strong></td>
             <!-- здесь был total_qty — убираем его совсем -->
             <td style="text-align: right;">
-                <strong>{{ totals.total_revenue }} руб.</strong>
+                <strong>{{ totals.total_revenue|floatformat:2 }} руб.</strong>
             </td>
         </tr>
     </table>

@@ -2,6 +2,7 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.http import HttpResponse, HttpResponseRedirect
 from .models import Product, Category, Brand, Review, Order, OrderItem
 from .cart import Cart
+from django.db import transaction
 from django.db.models import Q, Count, Avg
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -186,6 +187,13 @@ def cart_add(request, product_id):
     """Добавление товара в корзину"""
     cart = Cart(request)
     product = get_object_or_404(Product, id=product_id, is_active=True)
+
+    current_quantity = cart.cart.get(str(product.id), {}).get('quantity', 0)
+    if not product.in_stock or product.stock_quantity <= current_quantity:
+        messages.error(request, "На складе нет нужного количества этого товара.")
+        referer = request.META.get('HTTP_REFERER', '/')
+        return redirect(referer)
+
     cart.add(product=product)
     
     referer = request.META.get('HTTP_REFERER', '/')
@@ -205,6 +213,10 @@ def cart_update(request, product_id):
     
     if request.method == 'POST':
         if 'increase' in request.POST:
+            current_quantity = cart.cart.get(str(product.id), {}).get('quantity', 0)
+            if not product.in_stock or product.stock_quantity <= current_quantity:
+                messages.error(request, "На складе нет нужного количества этого товара.")
+                return redirect('store:cart_detail')
             cart.add(product=product)
         elif 'decrease' in request.POST:
             cart.decrease(product=product)
@@ -232,33 +244,70 @@ def checkout(request):
         if not full_name or not shipping_address or not phone or not email or not payment_method:
             messages.error(request, "Пожалуйста, заполните все обязательные поля.")
         else:
-            subtotal = cart.get_total_price()
-            shipping_cost = 0
+            try:
+                with transaction.atomic():
+                    cart_data = cart.cart.copy()
+                    product_ids = cart_data.keys()
+                    products = {
+                        str(product.id): product
+                        for product in Product.objects.select_for_update().filter(id__in=product_ids)
+                    }
 
-            order = Order.objects.create(
-                user=request.user,
-                full_name=full_name,
-                shipping_address=shipping_address,
-                phone=phone,
-                email=email,
-                payment_method=payment_method,
-                subtotal=subtotal,
-                shipping_cost=shipping_cost,
-                status="paid",  # или "pending"
-                notes=notes,
-            )
+                    order_items = []
+                    subtotal = 0
 
-            for item in cart:
-                OrderItem.objects.create(
-                    order=order,
-                    product=item['product'],
-                    quantity=item['quantity'],
-                    price=item['price'],
-                )
+                    for product_id, item in cart_data.items():
+                        product = products.get(product_id)
+                        quantity = item['quantity']
 
-            cart.clear()
-            messages.success(request, f"Заказ №{order.id} успешно создан.")
-            return redirect('store:index')
+                        if not product or not product.is_active:
+                            raise ValueError("Один из товаров больше недоступен.")
+
+                        if not product.in_stock or product.stock_quantity < quantity:
+                            raise ValueError(
+                                f"Товара «{product.name}» недостаточно на складе. Доступно: {product.stock_quantity} шт."
+                            )
+
+                        price = product.price
+                        subtotal += price * quantity
+                        order_items.append({
+                            'product': product,
+                            'quantity': quantity,
+                            'price': price,
+                        })
+
+                    shipping_cost = 0
+
+                    order = Order.objects.create(
+                        user=request.user,
+                        full_name=full_name,
+                        shipping_address=shipping_address,
+                        phone=phone,
+                        email=email,
+                        payment_method=payment_method,
+                        subtotal=subtotal,
+                        shipping_cost=shipping_cost,
+                        status="paid",
+                        notes=notes,
+                    )
+
+                    for item in order_items:
+                        product = item['product']
+                        OrderItem.objects.create(
+                            order=order,
+                            product=product,
+                            quantity=item['quantity'],
+                            price=item['price'],
+                        )
+                        product.stock_quantity -= item['quantity']
+                        product.in_stock = product.stock_quantity > 0
+                        product.save(update_fields=['stock_quantity', 'in_stock'])
+            except ValueError as error:
+                messages.error(request, str(error))
+            else:
+                cart.clear()
+                messages.success(request, f"Заказ №{order.id} успешно создан.")
+                return redirect('store:index')
 
     context = {
         'cart': cart,
