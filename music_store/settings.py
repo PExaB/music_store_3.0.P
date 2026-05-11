@@ -82,12 +82,14 @@ WSGI_APPLICATION = 'music_store.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'mssql',
-        'NAME': 'MyDjangoDB',
-        'HOST': 'localhost',
-        'PORT': '1433',
+        'NAME': os.getenv('DJANGO_DB_NAME', 'MyDjangoDB'),
+        'USER': os.getenv('DJANGO_DB_USER', 'sa'),
+        'PASSWORD': os.getenv('DJANGO_DB_PASSWORD'),
+        'HOST': os.getenv('DJANGO_DB_HOST', 'db'),
+        'PORT': os.getenv('DJANGO_DB_PORT', '1433'),
         'OPTIONS': {
-            'driver': 'ODBC Driver 17 for SQL Server',
-            'Trusted_Connection': 'yes',
+            'driver': 'ODBC Driver 18 for SQL Server',
+            'extra_params': 'TrustServerCertificate=yes;',
         },
     }
 }
