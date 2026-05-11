@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}История заказов{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+        <div>
+            <h1 class="mb-1">История заказов</h1>
+            <p class="text-muted mb-0">Здесь отображаются ваши текущие и завершенные заказы.</p>
+        </div>
+        <a href="{% url 'store:product_list' %}" class="btn btn-outline-primary">
+            <i class="fas fa-music"></i> Вернуться в каталог
+        </a>
+    </div>
+
+    {% if orders %}
+        <div class="row g-4">
+            {% for order in orders %}
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <strong>Заказ №{{ order.id }}</strong>
+                                <span class="text-muted ms-2">{{ order.created_at|date:"d.m.Y H:i" }}</span>
+                            </div>
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <span class="badge
+                                    {% if order.status == 'pending' %}bg-secondary
+                                    {% elif order.status == 'paid' %}bg-primary
+                                    {% elif order.status == 'delivered' %}bg-success
+                                    {% elif order.status == 'cancelled' %}bg-danger
+                                    {% endif %}">
+                                    {{ order.get_status_display }}
+                                </span>
+                                {% if order.status == 'pending' or order.status == 'paid' %}
+                                    <form method="post" action="{% url 'store:cancel_order' order.id %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                                            Отменить заказ
+                                        </button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            {% if order.status == 'paid' %}
+                                <div class="alert alert-primary">
+                                    Заказ оплачен. После получения администратор отметит его как доставленный.
+                                </div>
+                            {% elif order.status == 'delivered' %}
+                                <div class="alert alert-success">
+                                    Заказ получен и сохранен в вашей истории.
+                                </div>
+                            {% elif order.status == 'cancelled' %}
+                                <div class="alert alert-danger">
+                                    Заказ отменен. Если товар был списан со склада, он возвращен в наличие.
+                                </div>
+                            {% endif %}
+
+                            <div class="table-responsive">
+                                <table class="table align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th>Товар</th>
+                                            <th>Категория</th>
+                                            <th>Количество</th>
+                                            <th>Цена</th>
+                                            <th>Сумма</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for item in order.items.all %}
+                                            <tr>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-3">
+                                                        {% if item.product.image %}
+                                                            <img src="{{ item.product.image.url }}" alt="{{ item.product.name }}" class="rounded" style="width: 56px; height: 56px; object-fit: cover;">
+                                                        {% else %}
+                                                            <img src="{% static 'img/no-image.jpg' %}" alt="No image" class="rounded" style="width: 56px; height: 56px; object-fit: cover;">
+                                                        {% endif %}
+                                                        <div>
+                                                            <strong>{{ item.product.name }}</strong>
+                                                            {% if item.product.brand %}
+                                                                <div class="text-muted small">{{ item.product.brand.name }}</div>
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td>{{ item.product.category.name }}</td>
+                                                <td>{{ item.quantity }}</td>
+                                                <td>{{ item.price }} руб.</td>
+                                                <td>{{ item.total_price }} руб.</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="d-flex flex-wrap justify-content-between gap-3 mt-3">
+                                <div class="text-muted">
+                                    <div>Адрес доставки: {{ order.shipping_address }}</div>
+                                    <div>Способ оплаты: {{ order.get_payment_method_display }}</div>
+                                </div>
+                                <div class="fs-5">
+                                    <strong>Итого: {{ order.total }} руб.</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="text-center py-5">
+            <i class="fas fa-receipt fa-4x text-muted mb-4"></i>
+            <h3 class="text-muted">История заказов пуста</h3>
+            <p class="text-muted mb-4">После оформления заказ появится здесь со статусом оплаты.</p>
+            <a href="{% url 'store:product_list' %}" class="btn btn-primary btn-lg">Перейти в каталог</a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

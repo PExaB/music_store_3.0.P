@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:16
+    container_name: music_store_postgres
+    environment:
+      POSTGRES_DB: music_store
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "15432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
