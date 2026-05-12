@@ -6,14 +6,25 @@
             <div class="sales-ai-header">
                 <div>
                     <h2>AI-аналитик продаж</h2>
-                    <p>Автоматические выводы по продажам, спросу и остаткам за последние 30 дней.</p>
+                    <p>Отчет открывается из кэша. AI-анализ обновляется отдельно по кнопке.</p>
                 </div>
+                <form method="post" class="sales-ai-refresh-form">
+                    {% csrf_token %}
+                    <button type="submit" name="refresh_sales_ai" value="1" class="button">
+                        Обновить AI-анализ
+                    </button>
+                </form>
             </div>
 
             {% if llm_sales_summary %}
                 <div class="sales-ai-llm">
                     <h3>LLM-прогноз и рекомендации</h3>
                     <p>{{ llm_sales_summary|linebreaksbr }}</p>
+                </div>
+            {% else %}
+                <div class="sales-ai-llm sales-ai-llm-empty">
+                    <h3>LLM-прогноз и рекомендации</h3>
+                    <p>Кэш AI-анализа пока пуст. Нажмите «Обновить AI-анализ», чтобы пересчитать агрегаты и запросить AI-рекомендации.</p>
                 </div>
             {% endif %}
 

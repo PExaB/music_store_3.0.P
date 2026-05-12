@@ -1,6 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django import forms
 from decimal import Decimal
+import hashlib
 from chatbot.gigachat_service import GigaChatService
 from .models import Brand, Category, Product, ProductImage, Order, OrderItem, Review
 from .inventory import STOCK_DEDUCTING_STATUSES, StockError, get_order_stock_errors, sync_order_stock_for_status
@@ -8,12 +9,16 @@ from django.db.models import Count, DecimalField, ExpressionWrapper, F, Sum
 from rangefilter.filters import DateRangeFilterBuilder
 from django.utils.formats import number_format
 from django.utils import timezone
+from django.core.cache import cache
+from django.shortcuts import redirect
 
 
 REVENUE_EXPR = ExpressionWrapper(
     F('quantity') * F('price'),
     output_field=DecimalField(max_digits=12, decimal_places=2),
 )
+SALES_ANALYTICS_CACHE_TIMEOUT = 60 * 60
+SALES_AI_CACHE_TIMEOUT = 60 * 60 * 12
 
 
 def money(value):
@@ -425,29 +430,76 @@ class SalesReportAdmin(admin.ModelAdmin):
     def total_price(self, obj):
         return f"{number_format(obj.total_sum, decimal_pos=2, use_l10n=True)} руб."
 
-    # СЮДА: считаем итоги по текущему queryset
+    def _sales_cache_keys(self, request):
+        query = request.GET.copy()
+        query.pop('p', None)
+        query.pop('o', None)
+        query.pop('_changelist_filters', None)
+        raw_key = query.urlencode()
+        digest = hashlib.md5(raw_key.encode('utf-8')).hexdigest()
+        return {
+            'analytics': f'admin:sales_analytics:{digest}',
+            'ai': f'admin:sales_ai:{digest}',
+        }
+
+    def _build_sales_report_cache(self, qs):
+        active_qs = qs.filter(order__status__in=['paid', 'delivered'])
+        cancelled_qs = qs.filter(order__status='cancelled')
+        sales_insights = build_sales_insights(qs)
+
+        return {
+            'totals': active_qs.aggregate(
+                total_qty=Sum('quantity'),
+                total_revenue=Sum(REVENUE_EXPR),
+            ),
+            'cancelled_totals': cancelled_qs.aggregate(
+                total_qty=Sum('quantity'),
+                total_revenue=Sum(REVENUE_EXPR),
+            ),
+            'sales_insights': sales_insights,
+        }
+
+    # СЮДА: показываем кэшированный отчет и обновляем AI только по кнопке
     def changelist_view(self, request, extra_context=None):
+        refresh_ai = request.method == 'POST' and request.POST.get('refresh_sales_ai')
+        if refresh_ai:
+            cache_keys = self._sales_cache_keys(request)
+            try:
+                cl = self.get_changelist_instance(request)
+                report_cache = self._build_sales_report_cache(cl.queryset)
+                sales_insights = report_cache['sales_insights']
+                llm_sales_summary = GigaChatService().analyze_sales(
+                    build_llm_sales_payload(sales_insights)
+                )
+            except Exception:
+                messages.error(request, "Не удалось обновить AI-анализ. Отчет из кэша остался доступен.")
+                return redirect(request.get_full_path())
+
+            cache.set(cache_keys['analytics'], report_cache, SALES_ANALYTICS_CACHE_TIMEOUT)
+            cache.set(cache_keys['ai'], llm_sales_summary, SALES_AI_CACHE_TIMEOUT)
+            messages.success(request, "AI-анализ продаж обновлен и сохранен в кэш.")
+            return redirect(request.get_full_path())
+
         response = super().changelist_view(request, extra_context=extra_context)
         try:
             qs = response.context_data['cl'].queryset
         except (AttributeError, KeyError):
             return response
 
-        active_qs = qs.filter(order__status__in=['paid', 'delivered'])
-        cancelled_qs = qs.filter(order__status='cancelled')
-        response.context_data['totals'] = active_qs.aggregate(
-            total_qty=Sum('quantity'),
-            total_revenue=Sum(REVENUE_EXPR),
-        )
-        response.context_data['cancelled_totals'] = cancelled_qs.aggregate(
-            total_qty=Sum('quantity'),
-            total_revenue=Sum(REVENUE_EXPR),
-        )
-        sales_insights = build_sales_insights(qs)
-        response.context_data['sales_insights'] = sales_insights
-        response.context_data['llm_sales_summary'] = GigaChatService().analyze_sales(
-            build_llm_sales_payload(sales_insights)
-        )
+        cache_keys = self._sales_cache_keys(request)
+        report_cache = cache.get(cache_keys['analytics'])
+        llm_sales_summary = cache.get(cache_keys['ai'])
+
+        if report_cache is None:
+            report_cache = self._build_sales_report_cache(qs)
+            cache.set(cache_keys['analytics'], report_cache, SALES_ANALYTICS_CACHE_TIMEOUT)
+            llm_sales_summary = None
+
+        response.context_data['totals'] = report_cache['totals']
+        response.context_data['cancelled_totals'] = report_cache['cancelled_totals']
+        response.context_data['sales_insights'] = report_cache['sales_insights']
+        response.context_data['llm_sales_summary'] = llm_sales_summary
+        response.context_data['sales_ai_cached'] = llm_sales_summary is not None
         return response
     
 admin.site.register(Review)
