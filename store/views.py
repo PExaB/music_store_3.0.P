@@ -8,6 +8,7 @@ from django.db.models import Q, Count, Avg
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_http_methods
+from django.core.paginator import Paginator
 
 
 def index(request):
@@ -30,7 +31,7 @@ def product_list(request):
     brand_ids = request.GET.getlist('brand')         # ['1', '3', ...]
 
     # Базовый queryset
-    products = Product.objects.filter(is_active=True)
+    products = Product.objects.filter(is_active=True).select_related('brand', 'category')
 
     # Фильтрация по категориям (множественный выбор)
     if category_ids:
@@ -54,8 +55,21 @@ def product_list(request):
         product_count=Count('products', filter=Q(products__is_active=True))
     ).distinct()
 
+    found_products_count = products.count()
+    paginator = Paginator(products, 9)
+    page_obj = paginator.get_page(request.GET.get('page'))
+
+    pagination_query = request.GET.copy()
+    pagination_query.pop('page', None)
+    pagination_query = pagination_query.urlencode()
+
     context = {
-        'products': products,
+        'products': page_obj.object_list,
+        'page_obj': page_obj,
+        'paginator': paginator,
+        'pagination_query': pagination_query,
+        'found_products_count': found_products_count,
+        'all_products_count': Product.objects.filter(is_active=True).count(),
         'categories': categories,
         'brands': brands,
         'current_categories': current_categories,
@@ -100,7 +114,6 @@ def product_detail(request, product_id):
     specs = [
         ("Категория", product.category.name),
         ("Бренд", product.brand.name if product.brand else None),
-        ("Тип инструмента", product.get_instrument_type_display()),
         ("Уровень подготовки", product.get_skill_level_display() if product.skill_level else None),
         ("Состояние", product.get_condition_display()),
         ("Наличие", f"В наличии, {product.stock_quantity} шт." if product.in_stock else "Нет в наличии"),
