@@ -427,6 +427,21 @@ class GigaChatService:
             return int(match.group(1))
         return None
 
+    def _is_bass_guitar_request(self, text: str) -> bool:
+        text = text.lower()
+        return any(keyword in text for keyword in ("бас", "bass"))
+
+    def _normalize_search_products_args(self, user_message: str, function_args: dict) -> dict:
+        function_args = dict(function_args or {})
+
+        if self._is_bass_guitar_request(user_message):
+            function_args["instrument_type"] = "guitar"
+            function_args["guitar_subtype"] = "bass"
+            function_args["category"] = "Басгитары"
+            function_args.setdefault("query", "бас")
+
+        return function_args
+
     def process_message_with_products(self, user_message: str, session_id: str, chat_history: list = None):
         # Получаем или создаём сессию
         session, _ = ChatSession.objects.get_or_create(session_key=session_id)
@@ -678,6 +693,7 @@ class GigaChatService:
 
                 # Выполняем функцию
                 if function_name == "search_products":
+                    function_args = self._normalize_search_products_args(user_message, function_args)
                     result = search_products(**function_args)
                     if not result:
                         function_result_message = {"error": "no_products_found", "message": "Товары не найдены..."}
@@ -805,6 +821,7 @@ class GigaChatService:
 
                 # Выполняем функцию и готовим результат
                 if function_name == "search_products":
+                    function_args = self._normalize_search_products_args(user_message, function_args)
                     result = search_products(**function_args)
                     if not result:
                         function_result_message = {
