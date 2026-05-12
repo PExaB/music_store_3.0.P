@@ -1,0 +1,40 @@
+[
+{
+  "model": "users.customuser",
+  "fields": {
+    "password": "pbkdf2_sha256$1000000$GJLMuEZEchQ6viL2kIbmQy$C+mgzOclyO5o7xVgQxreGsh5W4VKBgijMHVqvaYYAIY=",
+    "last_login": "2026-05-11T18:35:26.076Z",
+    "is_superuser": true,
+    "username": "admin",
+    "first_name": "",
+    "last_name": "",
+    "email": "kirill.maneylov@mail.ru",
+    "is_staff": true,
+    "is_active": true,
+    "date_joined": "2025-12-18T12:11:43.317Z",
+    "phone": "",
+    "address": "",
+    "groups": [],
+    "user_permissions": []
+  }
+},
+{
+  "model": "users.customuser",
+  "fields": {
+    "password": "pbkdf2_sha256$1000000$p5eMZpdLR2P5KmT4xtIDcn$S7oArEDTf+kmx5kL0LyADLuIEuS6wZTx8Pa7I25Rujc=",
+    "last_login": "2025-12-21T09:31:25.238Z",
+    "is_superuser": false,
+    "username": "Kirill",
+    "first_name": "",
+    "last_name": "",
+    "email": "",
+    "is_staff": false,
+    "is_active": true,
+    "date_joined": "2025-12-21T09:30:10.232Z",
+    "phone": "+7(950)056-96-18",
+    "address": "",
+    "groups": [],
+    "user_permissions": []
+  }
+}
+]

@@ -519,6 +519,44 @@ a:hover {
     white-space: pre-wrap;
 }
 
+.order-history-page .order-card,
+.order-history-page .order-card .card-header,
+.order-history-page .order-card .card-body {
+    background-color: var(--ms-surface);
+    color: var(--ms-text);
+}
+
+.order-history-page .order-card .card-header {
+    background-color: var(--ms-surface-soft);
+    border-bottom-color: var(--ms-border);
+}
+
+.order-history-page .order-table {
+    --bs-table-bg: var(--ms-surface);
+    --bs-table-color: var(--ms-text);
+    --bs-table-border-color: var(--ms-border);
+    --bs-table-hover-bg: var(--ms-surface-soft);
+    --bs-table-hover-color: var(--ms-text);
+    color: var(--ms-text);
+    border-color: var(--ms-border);
+}
+
+.order-history-page .order-table th {
+    background-color: var(--ms-surface-soft);
+    color: var(--ms-muted);
+    border-color: var(--ms-border);
+}
+
+.order-history-page .order-table td {
+    background-color: var(--ms-surface);
+    color: var(--ms-text);
+    border-color: var(--ms-border);
+}
+
+.order-history-page .order-table img {
+    background: #fff;
+}
+
 @media (min-width: 1400px) {
     .container {
         max-width: 1360px;

@@ -4,7 +4,7 @@
 {% block title %}История заказов{% endblock %}
 
 {% block content %}
-<div class="container py-4">
+<div class="container py-4 order-history-page">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
         <div>
             <h1 class="mb-1">История заказов</h1>
@@ -19,7 +19,7 @@
         <div class="row g-4">
             {% for order in orders %}
                 <div class="col-12">
-                    <div class="card">
+                    <div class="card order-card">
                         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
                             <div>
                                 <strong>Заказ №{{ order.id }}</strong>
@@ -60,7 +60,7 @@
                             {% endif %}
 
                             <div class="table-responsive">
-                                <table class="table align-middle">
+                                <table class="table align-middle order-table">
                                     <thead>
                                         <tr>
                                             <th>Товар</th>

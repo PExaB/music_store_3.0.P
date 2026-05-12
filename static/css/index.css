@@ -27,6 +27,28 @@ main {
     filter: brightness(0.7);
 }
 
+.featured-products .carousel-item img {
+    filter: none;
+}
+
+.featured-products .carousel-inner {
+    padding: 4px 42px 0;
+}
+
+.featured-products-control {
+    width: 38px;
+    opacity: 1;
+}
+
+.featured-products-control .carousel-control-prev-icon,
+.featured-products-control .carousel-control-next-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background-color: rgba(0, 0, 0, 0.55);
+    background-size: 58%;
+}
+
 .promotion-card, .category-card, .news-card, .product-card {
     transition: transform 0.3s ease, box-shadow 0.3s ease;
     border: none;

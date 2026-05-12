@@ -13,12 +13,26 @@ from django.core.paginator import Paginator
 
 def index(request):
     """Главная страница"""
-    featured_products = Product.objects.filter(is_active=True)[:8]
-    categories = Category.objects.all()
+    featured_products = list(
+        Product.objects.filter(is_active=True)
+        .select_related('category', 'brand')[:10]
+    )
+    featured_product_slides = [
+        featured_products[index:index + 4]
+        for index in range(0, len(featured_products), 4)
+    ]
+    categories = (
+        Category.objects.annotate(
+            product_count=Count('products', filter=Q(products__is_active=True))
+        )
+        .filter(product_count__gt=0)
+        .order_by('-product_count', 'name')[:8]
+    )
     brands = Brand.objects.filter(is_active=True)  # активные бренды для карусели
     
     context = {
         'featured_products': featured_products,
+        'featured_product_slides': featured_product_slides,
         'categories': categories,
         'brands': brands,
     }
