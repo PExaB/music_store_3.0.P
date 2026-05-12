@@ -6,6 +6,8 @@ __pycache__/
 *.sqlite3
 venv/
 .env
+store_data.json
+users_data.json
 
 # Django
 *.log
